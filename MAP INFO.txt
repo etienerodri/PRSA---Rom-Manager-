@@ -1,0 +1,192 @@
+Pokemon Ranger: Shadows of Almia Map Format
+(Based on https://github.com/SunakazeKun/AlmiaE/blob/master/docs/format_map.txt and extensive hex analysis)
+
+In the ROM's filesystem map files are found in data/data/field/map/. Every map consists of two NARC archives storing the layout and textures of the scene:
+
+.map.tex.lz: Textures (also referred to as tilesets in this document)
+
+.map.dat.lz: Layout
+
+The exact content of these archives is thoroughly described
+below. As denoted by the file extension, the archives are LZ10
+compressed.
+
+.map.tex.lz:
+After decompression, the file starts with a magic "TEX" string, followed by NARC data at offset 0x4.
+The NARC contains NARCs for each tileset. These then contain an NCBR/RGCN/NCGR texture and an NCLR/RLCN palette.
+
+Content of .map.dat.lz:
+After decompression the file is in NARC format and extracting it produces:
+
+Binary file starting with "MPIF"
+
+Binary file starting with "TXIF"
+
+Binary file starting with "LYR"
+
+Binary file starting with "CTA" (Character/Tile Animations)
+
+LYR File
+This is the file where most of the map data is stored.
+
+Contains a NARC at file offset 0x4. It then contains a NARC file for each "layer list" in the map (most maps only have one but some have more).
+
+Each layer list NARC contains binary files, one per map layer.
+
+The layer files start with a 4 byte identifier number marking the type of layer, followed by the actual data. See "Layer Types" below for more info.
+
+The order in which the layer files are inside the layer list affects the order in which the game handles / renders them.
+
+MPIF file (0x14 bytes)
+Short for "Map Info". This 20-byte header defines the map dimensions in pixels. All dimensions are perfectly divisible by 16 (the tile size).
+
+0x00	char[4]	magic ("MPIF")
+0x04	uint32	width (in pixels)
+0x08	uint32	height (in pixels)
+0x0C	uint32	unknown1 (ALWAYS 0x00000010 / 16)
+0x10	uint32	unknown2 (ALWAYS 0x00000010 / 16)
+TXIF file (0x8 bytes + entries * 0xC bytes)
+Short for "Texture Info". Has an entry for each tileset. Note: Further analysis shows entries are actually 12 (0xC) bytes long, not 8.
+
+0x00	char[4]	magic ("TXIF")
+0x04	uint32	textures count (little-endian)
+0x08			texture entries (à 0xC bytes)
+	0x00	uint32		type/flags (0x00, 0x01, 0x02, or 0x03)
+	0x04	uint32		Entry ID/Index (incremental)
+	0x08	uint32		Parameter/Value (references tile/texture IDs)
+Binary file "CTA"
+Stands for Character/Tile Animations. This handles environmental effects and animated tiles (different from PLA which handles player/path sequences). Starts with 0x43544100 (CTA\0).
+
+Layer types
+These are the data structures of the binary files inside layer lists. The first 4 bytes of the file determines the type.
+
+Type 0x01 - Priority/Base Layer (FieldMapLayerCharacterPriorit):
+This layer type is universal and appears in virtually every map. It establishes the base rendering priority and draw order foundation for the map. It may contain minimal actual tile data but must exist.
+
+0x00	uint32	identifier (0x01000000)
+Type 0x02 - Tiles / Combined Tilemap (FieldMapLayerNormalView)
+The map construction blueprint. This layer acts as a detailed instruction manual that tells the renderer exactly how to assemble individual tiles from multiple tilesets into a complete map image.
+
+0x00	uint32	identifier (0x02000000)
+0x04	uint32	Static Data Size
+0x08	uint32	Header Type A (Commonly 0x14000000)
+0x0C	uint32  Header Type B (Commonly 0x0D000000)
+0x10    uint32  Header Type C (Commonly 0x10000000)
+0x14    uint32  Layer Count/Type
+0x18    uint32  X Offset/Dimension
+0x1C    uint32  Y Offset/Dimension
+This is followed by the Static Data, which holds the Bounding Boxes (BBox), Placements (which assign specific tileset_ids), and the TileRects (which assign the specific 16x16 tiles and their palettes).
+
+Type 0x03 - Collision (FieldMapLayerCollision)
+Defines walkable vs. non-walkable areas and environmental zones. Every file shares an identical 20-byte header.
+
+0x00	uint32	identifier (0x03000000)
+0x04	uint32	always 0x10000000 (constant)
+0x08	uint32	Data Size (width * height * 2)
+0x0C	uint32	width (in tiles)
+0x10	uint32	height (in tiles)
+0x14			entries (à 0x2 bytes per tile, stored left-to-right, top-to-bottom)
+	0x00	uint16	collision value
+Values range from 0x00 to 0x3F. (0x00 = solid wall, 0x01 = standard walkable, 0x1A = environmental/terrain, 0x1F/0x20 = water areas).
+
+Type 0x04 - Objects (FieldMapLayerObject):
+Interactive object placements (obstacles to clear, invisible script triggers).
+
+0x00	uint32	identifier
+0x04	uint32	entries count
+0x08			entries (à 0xC bytes)
+	0x00	int16	X-Pos
+	0x02	int16	Y-Pos
+	0x04	uint16	unknown (values always in range 0-2?)
+	0x06	uint16	Obstacle ID
+	0x08	uint16	Target Object Script ID
+	0x0A	uint16	Touch Script ID
+Type 0x07 - Trigger / Event Zone Layer (FieldMapLayerEventRect):
+Contains invisible rectangles that trigger events, zone transitions, warps, and cutscenes when the player steps on/off them. Extremely consistent 8-byte header.
+
+0x00	uint32	identifier (0x07000000)
+0x04	uint32	entries count
+0x08			entries (variable length, usually 16-24 bytes)
+	0x00	uint16	X-Pos
+	0x02	uint16	Y-Pos
+	0x04	uint16	Width
+	0x06	uint16	Height
+	0x08	uint16	Trigger Type 
+	0x0A	uint16	Trigger ID (Script Reference)
+    0x0C    uint16  Flags (Optional)
+    0x0E    uint16  Extra Parameters (Optional)
+Trigger types dictate behavior (0x00 = zone transition, 0x01 = NPC interaction, 0x06 = Warp).
+
+Type 0x08 - NPC / Entity Placement (FieldMapLayerNpc):
+Used for positioning interactive NPCs, characters, and special entities. Found across layers 0-32, supporting up to 31 entities.
+
+0x00	uint32	identifier (0x08000000)
+0x04	uint32	entries count
+0x08			entries (variable length, typically 14-16 bytes)
+	0x00	uint16	X-Pos
+	0x02	uint16	Y-Pos
+	0x04	uint16	Entity Type Code (0x01XX = NPCs, 0x00XX = Items)
+	0x06	uint16	Entity ID
+	0x08	uint16	Flags/Properties (Direction, Movement, etc.)
+    0x0A    uint8[] Extra Data (Optional)
+Type 0x09 - Pokémon Spawns (FieldMapLayerEnemy):
+Defines wild Pokemon spawn points and behavior. Highly consistent 10-byte standard entries.
+
+0x00	uint32	identifier (0x09000000)
+0x04	uint32	entries count (Usually 0x00 to 0x1A)
+0x08			entries (à 0xA bytes standard)
+	0x00	uint16	X-Pos (tile-based)
+	0x02	uint16	Y-Pos (tile-based)
+	0x04	uint16	Padding (usually 0x0000)
+	0x06	uint16	Pokémon Species ID
+	0x08	uint16	Spawn Flags / Behavior
+Type 0x0A - Multi-Scroll / Parallax (FieldMapLayerMultiScroll)
+Implements parallax scrolling for visual depth.
+
+0x00	uint32	identifier (0x0A000000)
+0x04	uint32	Repeat Width
+0x08	uint32	Repeat Height (usually map_height + fixed_offset)
+0x0C 	uint32  Scroll Offset X
+0x10    uint32  Scroll Offset Y
+...
+End     uint32  Terminator Magic (0x0E000000)
+Type 0x0B - UV Scroll Layer (FieldMapLayerUVScroll)
+Used for UV texture scrolling for water, lava, conveyor belts, and animated backgrounds. Uses signed integers to control scroll speed and direction.
+
+0x00	uint32	identifier (0x0B000000)
+0x04	uint32	Unknown Parameter 1
+0x08	int32	Animation Flags / Scroll Speed (e.g. 0xD0FFFF00 = -48 for slow scroll)
+0x0C    uint32  Unknown Parameter 2
+0x10    uint32  Format Version (Always 0x10000000)
+0x14    uint32  Entity Count
+0x18    uint32  Unknown Parameter 3
+0x1C            Entity Data (Complex, variable structure)
+Type 0x0D - Shadow Layer / Static Tilemap (FieldMapLayerStatic):
+Originally documented as static tilemap layer, but this layer is actually the core engine used heavily for rendering Shadows and complex opacity blending. Contains BBox -> Placement -> Rectangle structures similar to 0x02.
+
+0x00	uint32	identifier (0x0D000000)
+0x04	uint32	Format Version (0x10000000)
+0x08	uint32 	BBox Data Size
+0x0C	uint32 	Render Flags (0xFCFFF8FF = inverted mask, 0x00080008 = water reflection)
+0x10	uint32 	Render Mode / Dimensions
+...
+The Layer ID dictates shadow intensity (e.g., Layer 05 = Medium shadows, Layer 06 = Heavy evening shadows, Layer 07 = Darkest). Tile IDs are assigned specific opacity gradients (e.g., 0x00-0x3F for light, 0xC0-0xFF for dark).
+
+Type 0x0E - Character Transform Layer (FieldMapLayerCharaTrans)
+Handles character transformations and entity positioning within the game world (NPC positioning, rotations, animated object transforms).
+
+0x00	uint32	identifier (0x0E000000)
+0x04	uint32	Format Version (usually 0x00000000 or 0x10000000)
+0x08	uint32	entries count
+0x0C	uint32	Reserved/Flags
+0x10	uint32	Data Offset (optional)
+
+0x14	For each entry (20+ bytes):
+	0x00	uint16	X Position
+	0x02	uint16	Y Position
+	0x04	uint16	Width/Scale X
+    0x06    uint16  Height/Scale Y
+    0x08    uint16  Rotation Angle (0-360)
+    0x0A    uint16  Entity ID/Type
+    0x0C    uint32  Properties/Flags
+    0x10    uint32  Additional Data Pointer (optional)
